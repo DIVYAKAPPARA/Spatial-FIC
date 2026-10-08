@@ -9,18 +9,7 @@ This repository contains R code for implementing FIC-based variable selection in
 **Paper Title:** Variable selection in spatial lag models using the focussed information criterion
 
 **Authors:** 
-- Sagar Pandhare
-- Divya Kappara
-- Siuli Mukhopadhyay
-
-## 📋 Overview
-
-This project implements three model selection methodologies for Spatial Lag Models:
-
-- **Focused Information Criterion (FIC)**: Model selection based on a specific focus parameter
-- **Vector Focused Information Criterion (VFIC)**: Extension for multiple focus parameters
-- **Average Focused Information Criterion (AFIC)**: Model averaging with kernel-based weighting
-
+- Sagar Pandhare, Divya Kappara, Siuli Mukhopadhyay
 
 
 
