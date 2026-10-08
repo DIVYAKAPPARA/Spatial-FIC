@@ -1,0 +1,405 @@
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Required Packages}
+
+\begin{lstlisting}
+library(spdep)
+library(spatialreg)
+library(Matrix)
+library(MASS)
+library(psych)
+\end{lstlisting}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Preliminaries}
+\begin{lstlisting}
+beta=c(0.2, 0.2, 0, 0)
+p=length(beta); rho=0.5
+# Read shape file
+INDIA <- readRDS(".rds")
+p1 <- length(beta)+1
+
+# Generate all combinations (2^n)
+combinations <- expand.grid(rep(list(c(0, 1)), p1))
+combinations <- combinations[-1, ]
+ns=rowSums(combinations)
+# Initialize a list to store the projection matrices
+proj_ls <- list()
+
+# Loop through each combination
+for (i in 1:nrow(combinations)) {
+  # Extract the current combination
+  combination <- combinations[i, ]
+  
+  # Create a matrix based on the combination
+  proj_matrix <- diag(combination)
+  proj_matrix <- proj_matrix[rowSums(proj_matrix) > 0, , drop = FALSE]
+  
+  # Add to the list
+  proj_ls[[i]] <- proj_matrix
+}
+
+# Display the list of matrices
+proj_ls
+
+\end{lstlisting}
+\section{Function for Computing FIC}
+
+\begin{lstlisting}
+compute_FIC <-function(y,X,w1,p,beta,ns=ns,c_lev){
+
+  
+  coef=slm$coefficients
+  
+  #summary(slm)
+  
+  Vcov_O=round(slm$resvar,4)
+  
+  ###change the order rho, beta and sigma^2 
+  
+  Vcov_O=Vcov_O[c(2:nrow(Vcov_O),1),c(2:ncol(Vcov_O),1)]
+  
+  ##Hessian matrix
+  
+  Hess_mat=solve(Vcov_O)
+  
+  
+  ##partitions
+  
+  I_rr= as.matrix(Hess_mat[1,1])
+  I_rb=as.matrix(Hess_mat[1,c(2:(p+1))]); I_br=t(I_rb)
+  I_bb= as.matrix(Hess_mat[c(2:(p+1)),c(2:(p+1))])
+  I_rs= as.matrix(Hess_mat[1,(p+2)]); 
+  I_bs=as.matrix(Hess_mat[c(2:(p+1)),(p+2)]); I_sb=t(I_bs)
+  I_ss=as.matrix(Hess_mat[(p+2),(p+2)])
+  
+  #int=rep(1,nrow(w1))
+  #X_in=cbind(int,X)
+  
+  
+  I_S_ls=I_Sinv_ls=list()
+  FIC=Bias=Variance=Mse1=NULL; sm=list()
+  for(i in 1:length(ns)){
+
+    
+    
+    I_S12=t(I_rb)%*%t(proj_ls[[i]])
+    I_S21=(proj_ls[[i]])%*%t(I_br)
+    I_S22=proj_ls[[i]]%*%I_bb%*%t(proj_ls[[i]])
+    I_S32=t(c(rep(0,ns[i])))
+    I_S23=t(I_S32)
+    
+    #I_S=matrix(c(I_rr,I_S12,I_rs,I_S21,I_S22,I_S23,I_rs,I_S32,I_ss),nrow=5,ncol=5)
+    I_S=matrix(0,nrow=ns[i]+2,ncol=ns[i]+2)
+    I_S[1,1]=I_rr; I_S[1,2:(ns[i]+1)]=I_S12; I_S[1,nrow(I_S)]=I_rs
+    I_S[2:(ns[i]+1),1]=I_S21; I_S[2:(ns[i]+1),2:(ns[i]+1)]=I_S22; I_S[2:(ns[i]+1),nrow(I_S)]=I_S23
+    I_S[nrow(I_S),1]=I_rs; I_S[nrow(I_S),2:(ns[i]+1)]=I_S32; I_S[nrow(I_S),nrow(I_S)]=I_ss
+    
+    I_S_ls[[i]]=I_S
+    I_Sinv_ls[[i]]=solve(I_S)
+    
+    m1=I_Sinv_ls[[i]][1,1]%*%t(I_rb)+I_Sinv_ls[[i]][1,2:(ns[i]+1)]%*%proj_ls[[i]]%*%I_bb
+    m2=(I_Sinv_ls[[i]][2:(ns[i]+1),1])%*%t(I_rb)+I_Sinv_ls[[i]][2:(ns[i]+1),2:(ns[i]+1)]%*%proj_ls[[i]]%*%I_bb
+    m3=I_Sinv_ls[[i]][(ns[i]+2),1]%*%t(I_rb)
+    
+    J=c(w1[c_lev,]%*%y,(X%*%t(proj_ls[[i]]))[c_lev,],0)
+    D_n=sqrt(nrow(w1))%*%slm$coefficients ; delta_dt=t(D_n)%*%(D_n)
+    B_ws=J[1]%*%m1+J[2:(ns[i]+1)]%*%m2+J[(ns[i]+2)]%*%m3
+    V_ws=t(J)%*%I_Sinv_ls[[i]]%*%J
+    
+    Bias[i]=(B_ws)%*%delta_dt%*%t(B_ws); Variance[i]=V_ws
+    FIC[i]=(B_ws)%*%delta_dt%*%t(B_ws)+V_ws
+    Mse1[i]=((((X)%*%t(proj_ls[[i]]))[c_lev,]%*%(proj_ls[[i]]%*%coef)-y[c_lev])^2)
+    
+    
+  }
+  return(list(FIC=FIC,Mse1=Mse1,X=X,smodel=sm,bias=Bias,Vr=Variance,Beta_est=coef,rho_hat=slm$rho))
+  
+} #linear predictor
+
+\end{lstlisting}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Function for Computing VFIC}
+
+\begin{lstlisting}
+compute_VFIC <- function(y,X,w1,p,ns,focus){
+    coef=slm$coefficients; rho=slm$rho
+    
+    #summary(slm)
+    
+    Vcov_O=round(slm$resvar,4)
+    
+    ###change the order rho, beta and sigma^2 
+    
+    
+    Vcov_O=Vcov_O[c(2:nrow(Vcov_O),1),c(2:ncol(Vcov_O),1)]
+    
+    ##Hessian matrix
+    
+    Hess_mat=solve(Vcov_O)
+    
+    
+    ##partitions
+    
+    I_rr= as.matrix(Hess_mat[1,1])
+    I_rb=as.matrix(Hess_mat[1,c(2:(p+1))]); I_br=t(I_rb)
+    I_bb= as.matrix(Hess_mat[c(2:(p+1)),c(2:(p+1))])
+    I_rs= as.matrix(Hess_mat[1,(p+2)]); 
+    I_bs=as.matrix(Hess_mat[c(2:(p+1)),(p+2)]); I_sb=t(I_bs)
+    I_ss=as.matrix(Hess_mat[(p+2),(p+2)])
+    
+    #int=rep(1,nrow(w1))
+    #X_in=cbind(int,X)
+    
+    
+    I_S_ls=I_Sinv_ls=list()
+    FIC=Bias=Variance=Mse1=NULL; sm=list()
+    for(i in 1:length(ns)){
+      
+      I_S12=t(I_rb)%*%t(proj_ls[[i]])
+      I_S21=(proj_ls[[i]])%*%t(I_br)
+      I_S22=proj_ls[[i]]%*%I_bb%*%t(proj_ls[[i]])
+      I_S32=t(c(rep(0,ns[i])))
+      I_S23=t(I_S32)
+      
+      #I_S=matrix(c(I_rr,I_S12,I_rs,I_S21,I_S22,I_S23,I_rs,I_S32,I_ss),nrow=5,ncol=5)
+      I_S=matrix(0,nrow=ns[i]+2,ncol=ns[i]+2)
+      I_S[1,1]=I_rr; I_S[1,2:(ns[i]+1)]=I_S12; I_S[1,nrow(I_S)]=I_rs
+      I_S[2:(ns[i]+1),1]=I_S21; I_S[2:(ns[i]+1),2:(ns[i]+1)]=I_S22; I_S[2:(ns[i]+1),nrow(I_S)]=I_S23
+      I_S[nrow(I_S),1]=I_rs; I_S[nrow(I_S),2:(ns[i]+1)]=I_S32; I_S[nrow(I_S),nrow(I_S)]=I_ss
+      
+      I_S_ls[[i]]=I_S
+      I_Sinv_ls[[i]]=solve(I_S)
+      
+      
+      m1=I_Sinv_ls[[i]][1,1]%*%t(I_rb)+I_Sinv_ls[[i]][1,2:(ns[i]+1)]%*%proj_ls[[i]]%*%I_bb
+      m2=(I_Sinv_ls[[i]][2:(ns[i]+1),1])%*%t(I_rb)+I_Sinv_ls[[i]][2:(ns[i]+1),2:(ns[i]+1)]%*%proj_ls[[i]]%*%I_bb
+      m3=I_Sinv_ls[[i]][(ns[i]+2),1]%*%t(I_rb)
+      
+      M=rbind(m1,m2,m3); M=as.matrix(M)
+      
+      if(focus=="v1"){
+        #J=c(w1[60,]%*%y_hat,(X_in%*%t(proj_ls[[60]]))[1,],0)
+        J1=c(-tr(solve(diag(1,nrow(w1))-rho*w1)%*%w1),rep(0,(ns[i]+1)));
+        J2=c(0,1,rep(0,(ns[i]))); J3=cbind(rep(0,ns[i]),rep(0,ns[i]),diag(1,ns[i]))
+        J=rbind(J1,J2,J3); J=as.matrix(J)
+      }
+      else if(focus=="v2"){
+        J=cbind(rep(0,ns[i]),rep(0,ns[i]),diag(1,ns[i]))
+      }
+      D_n=sqrt(nrow(w1))%*%slm$coefficients ; delta_dt=t(D_n)%*%(D_n)
+      B_ws=J%*%M; B_ws=as.matrix(B_ws) 
+      V_ws=(J)%*%I_Sinv_ls[[i]]%*%t(J)
+      
+      #Bias[[i]]=(B_ws)%*%delta_dt%*%t(B_ws); Variance[[i]]=V_ws
+      FIC[i]=tr((B_ws)%*%delta_dt%*%t(B_ws)+V_ws)
+      #Mse[i]=mean((((X_in)%*%t(proj_ls[[i]]))%*%(proj_ls[[i]]%*%coef)-y_hat)^2)
+      Sys.sleep(0.5)
+    }
+    
+    # true data generating process
+    return(list(FIC=FIC))
+  }  # vector focus
+
+\end{lstlisting}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Function for Computing sAFIC}
+
+\begin{lstlisting}
+AFIC=function(w1,p,beta,rho,ns,psi){
+  mu=rep(0,p); Sigma=diag(1,p)
+  X=mvrnorm(n = nrow(w1), mu,Sigma=Sigma , tol = 1e-6, empirical = FALSE, EISPACK = FALSE)
+  rm(mu,Sigma)
+  #int=rep(1,nrow(w1))
+  #X=cbind(rep(1,nrow(w1)),X)
+  #colnames(X)=NULL; X=as.matrix(X)
+  
+  y_hat=solve(diag(nrow(w1)) - rho * w1) %*% (crossprod(t(X), beta)+rnorm(nrow(w1),0,1))
+  slm <- lagsarlm(y_hat ~X,listw = W1,method = "eigen") ##
+  coef=slm$coefficients
+  #summary(slm)
+  
+  Vcov_O=round(slm$resvar,4)
+  
+  ###change the order rho, beta and sigma^2 
+  
+  Vcov_O=Vcov_O[c(2:nrow(Vcov_O),1),c(2:ncol(Vcov_O),1)]
+  
+  ##Hessian matrix
+  
+  Hess_mat=solve(Vcov_O)
+  
+  ##partitions
+  
+  I_rr= as.matrix(Hess_mat[1,1])
+  I_rb=as.matrix(Hess_mat[1,c(2:(p+2))]); I_br=t(I_rb)
+  I_bb= as.matrix(Hess_mat[c(2:(p+2)),c(2:(p+2))])
+  I_rs= as.matrix(Hess_mat[1,(p+3)]); 
+  I_bs=as.matrix(Hess_mat[c(2:(p+2)),(p+3)]); I_sb=t(I_bs)
+  I_ss=as.matrix(Hess_mat[(p+3),(p+3)])
+  int=rep(1,nrow(w1))
+  X_in=cbind(int,X)
+  
+  H_nw=matrix(0,p+2,p+2)
+  H_nw[1,1]=t(w1%*%y_hat)%*%psi%*%(w1%*%y_hat); H_nw[1,c(2:(p+2))]=t(w1%*%y_hat)%*%psi%*%X_in
+  H_nw[c(2:(p+2)),1]=t(X_in)%*%psi%*%(w1%*%y_hat); H_nw[c(2:(p+2)),c(2:(p+2))]=t(X_in)%*%psi%*%X_in
+  
+  K_w=I_rb%*%(1/I_rr)%*%H_nw[1,1]%*%(1/I_rr)%*%(I_br)-2*I_rb%*%(1/I_rr)%*%H_nw[1,c(2:(p+2))]+H_nw[c(2:(p+2)),c(2:(p+2))]
+  Q=solve(I_bb-I_rb%*%(1/I_rr)%*%I_br)
+    
+  I_S_ls=I_Sinv_ls=list()
+  AFIC=NULL; sm=list()
+  for(i in 1:length(ns)){
+    
+    I_S12=t(I_rb)%*%t(proj_ls[[i]])
+    I_S21=(proj_ls[[i]])%*%t(I_br)
+    I_S22=proj_ls[[i]]%*%I_bb%*%t(proj_ls[[i]])
+#    I_S32=t(c(rep(0,ns[i])))
+#    I_S23=t(I_S32)
+    
+    #I_S=matrix(c(I_rr,I_S12,I_rs,I_S21,I_S22,I_S23,I_rs,I_S32,I_ss),nrow=5,ncol=5)
+    I_S=matrix(0,nrow=ns[i]+1,ncol=ns[i]+1)
+    I_S[1,1]=I_rr; I_S[1,2:(ns[i]+1)]=I_S12
+    I_S[2:(ns[i]+1),1]=I_S21; I_S[2:(ns[i]+1),2:(ns[i]+1)]=I_S22
+#    I_S[nrow(I_S),1]=I_rs; I_S[nrow(I_S),2:(ns[i]+1)]=I_S32; I_S[nrow(I_S),nrow(I_S)]=I_ss
+    
+    I_S_ls[[i]]=I_S
+    I_Sinv_ls[[i]]=solve(I_S)
+    
+    Q_s=solve(proj_ls[[i]]%*%solve(Q)%*%t(proj_ls[[i]]))
+    G_s=t(proj_ls[[i]])%*%Q_s%*%proj_ls[[i]]%*%solve(Q)
+    D_n=sqrt(nrow(w1))%*%slm$coefficients ; delta_dt=t(D_n)%*%(D_n)
+    AFIC[i]=tr((diag(1,p+1)-G_s)%*%delta_dt%*%t(diag(1,p+1)-G_s)%*%K_w)+tr(G_s%*%Q%*%t(G_s)%*%K_w)
+  }
+  
+  # true data generating process
+  return(list(AFIC=AFIC,x=X_in,yhat=y_hat,smodel=sm,Beta_est=coef,rho_hat=slm$rho))
+}
+
+\end{lstlisting}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Example usage}
+
+\begin{lstlisting}
+
+n=nrow(w1)
+psi1=diag(1/n,n)
+
+
+
+# Function to compute Gaussian Kernel Weight Matrix
+gaussian_kernel_weights <- function(X, fixed_index, h) {
+  # Number of regions (n) and covariates (p)
+  n <- nrow(X)
+  diff_X=psi_values=NULL
+  # Extract the fixed covariate row
+  X_fixed <- X[fixed_index, , drop = FALSE]
+  
+  # Compute Euclidean distances ||X_i - X_fixed||
+  for(i in 1:n){
+    diff_X[i] <- sqrt(sum(X_fixed - X[i,])^2) / h
+    
+    # Gaussian Kernel function
+    psi_values[i] <- (1 / sqrt(2 * pi)) * exp(-0.5 * diff_X[i]^2)
+  }
+  # Construct diagonal weight matrix
+  Psi <- diag(psi_values, n, n)
+  
+  return(Psi)
+}
+
+# Example usage
+
+X <- X  # Covariate levels for 10 regions
+fixed_index <-17            # Covariate level for the fixed region
+h <- 0.5                # Bandwidth parameter
+
+# Compute weight matrix
+Psi_matrix <- gaussian_kernel_weights(X, fixed_index, h)
+str(Psi_matrix)
+
+Psi_matrix=as.matrix(Psi_matrix)
+psi2=Psi_matrix        #~~~~kernel based weights matrix
+
+#beta=c(0.2,0.2,0.3,0,0)
+#beta <- c(0.2, 0.2, 0.3, 0, 0)
+beta=c(0,0.2, 0.2, 0, 0)
+p=length(beta); rho=0.5
+
+#p1 <- length(beta)+1
+
+#~~~~~~~~~~~~~ Generate all combinations (2^n) of submodels
+
+combinations <- expand.grid(rep(list(c(0, 1)), p))
+combinations <- combinations[-1, ]  
+ns=rowSums(combinations)
+# Initialize a list to store the projection matrices
+proj_ls <- list()
+
+# Loop for projection matrices for each combination 
+for (i in 1:nrow(combinations)) {
+  # Extract the current combination
+  combination <- combinations[i, ]
+  
+  # Create a matrix based on the combination
+  proj_matrix <- diag(combination)
+  proj_matrix <- proj_matrix[rowSums(proj_matrix) > 0, , drop = FALSE]
+  
+  # Add to the list
+  proj_ls[[i]] <- proj_matrix
+}
+
+# Display the list of matrices
+proj_ls
+
+# Extract n=75 data from INDIA shapefil
+#Up_sp=subset( Main shape file for different choices of n)
+w_Q <- poly2nb(Up_sp, queen = TRUE)
+w1 <- nb2mat(w_Q, style = 'W', zero.policy = TRUE) ##row-standardised
+W1 <- nb2listw(w_Q, style = "B", zero.policy = TRUE)
+
+###~~~~~~~~~~~~~~~~~~~~~~100 Simulations of under all Focus criteria and freq of submodels 
+
+FIC_1=FIC_2=VFIC1=VFIC2=AFIC_1=AFIC_2=Mse_sim=Mse_sim1=Mse_fixed=c()
+for(K in 1:100)
+{ 
+  print(paste("Iteration:", K))
+  mu=rep(0,p); Sigma=diag(1,p)
+  X=mvrnorm(n = nrow(w1), mu,Sigma=Sigma , tol = 1e-6, empirical = FALSE, EISPACK = FALSE)
+  y=solve(diag(nrow(w1)) - rho * w1) %*% (crossprod(t(X), beta)+rnorm(nrow(w1),0,1))
+  slm <- lagsarlm(y ~-1+X,listw = W1,method = "eigen") ##
+  res1=compute_FIC(y,X,w1,p,beta,ns=ns,1)   
+  res_eigen=y_fic_eigen(y,X,w1,p,ns)
+  resv1=compute_VFIC(y,X,w1,p,ns=ns,focus="v1")
+  resv2=compute_VFIC(y,X,w1,p,ns=ns,focus="v2")
+  afic1=AFIC(y,X,w1,p,ns,psi1)
+  afic2=AFIC(y,X,w1,p,ns,psi2)
+  FIC_1=cbind(FIC_1,res1$FIC)        #FIC1
+  VFIC1=cbind(VFIC1,resv1$FIC)      #vfic1
+  VFIC2=cbind(VFIC2,resv2$FIC)      #vfic2
+  AFIC_1=cbind(AFIC_1,afic1$AFIC) 
+  AFIC_2=cbind(AFIC_2,afic2$AFIC)
+  Mse_sim=cbind(Mse_sim,afic1$Mse)
+  Mse_sim1=cbind(Mse_sim1,afic2$Mse)        #MSE#MSE
+  Mse_fixed=cbind(Mse_fixed,res1$Mse1)     #se
+}
+
+####~~~~~~~~~~~~~saving simulation results
+
+sim_results=cbind(FIC_1,FIC_2,VFIC1,VFIC2,AFIC_1,AFIC_2,Mse_sim,Mse_sim1,Mse_fixed)
+sim_results=as.data.frame(sim_results)
+
+write_xlsx(sim_results, "simulation_results_updated.xlsx")
+
+min_in=apply(VFIC1,2,which.min)
+table(min_in)
+sort(table(min_in),decreasing = TRUE)
+indices=as.numeric(names(sort(table(min_in),decreasing = TRUE)))[1:5]
+
