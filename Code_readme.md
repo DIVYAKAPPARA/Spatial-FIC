@@ -1,6 +1,26 @@
-# Spatial Econometrics Model Selection using FIC, VFIC, and AFIC
 
-This repository contains R code for implementing FIC based variable selection, specifically for Spatial Lag Models (SLM). The project implements Focused Information Criterion (FIC), Vector Focused Information Criterion (VFIC), and Average Focused Information Criterion (AFIC) for variable selection in spatial regression models.
+
+# Variable Selection in Spatial Lag Models using the Focused Information Criterion
+
+This repository contains R code for implementing FIC-based variable selection in Spatial Lag Models (SLM) as proposed in our research paper.
+
+## 📖 About This Work
+
+**Paper Title:** Variable selection in spatial lag models using the focussed information criterion
+
+**Authors:** 
+- Sagar Pandhare
+- Divya Kappara
+- Siuli Mukhopadhyay
+
+## 📋 Overview
+
+This project implements three model selection methodologies for Spatial Lag Models:
+
+- **Focused Information Criterion (FIC)**: Model selection based on a specific focus parameter
+- **Vector Focused Information Criterion (VFIC)**: Extension for multiple focus parameters
+- **Average Focused Information Criterion (AFIC)**: Model averaging with kernel-based weighting
+
 
 
 
